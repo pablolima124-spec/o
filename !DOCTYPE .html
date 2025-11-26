@@ -1,0 +1,685 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Machine Crush - Jogo Completo</title>
+    
+    <!-- Carregando React e Tailwind via CDN para rodar sem instalação -->
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;700;900&display=swap');
+        body { font-family: 'Roboto', sans-serif; }
+    </style>
+</head>
+<body class="bg-slate-950 text-white">
+
+<div id="root"></div>
+
+<script type="text/babel">
+    const { useState, useEffect, useCallback, useRef } = React;
+
+    // --- Ícones SVG (Substituindo Lucide para rodar direto no navegador) ---
+    const Icon = ({ path, color = "currentColor", size = 24, className = "" }) => (
+        <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+            {path}
+        </svg>
+    );
+
+    const Play = (props) => <Icon {...props} path={<polygon points="5 3 19 12 5 21 5 3"></polygon>} />;
+    const Lock = (props) => <Icon {...props} path={<><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></>} />;
+    const Flame = (props) => <Icon {...props} path={<path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-2.246-2.056-2.246-2.056 7 2.056 9.5 7 9.5 7a5.5 5.5 0 0 1-5.5 5.5A2.5 2.5 0 0 1 8.5 14.5z"></path>} />;
+    const Radio = (props) => <Icon {...props} path={<><path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9"></path><path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5"></path><circle cx="12" cy="12" r="2"></circle><path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5"></path><path d="M19.1 4.9C23 8.8 23 15.2 19.1 19.1"></path></>} />;
+
+    // --- Peças Especiais ---
+    const BLOCK = '🧱'; // Parede Fixa
+    const PLASMA = '💠'; // Match em T ou L (Mais forte)
+    const TNT = '🧨';    // Match 4 (Mais comum)
+    const SUPER = '⚡';  // Match 5
+
+    // --- Definições de Itens para Combos ---
+    const ITEMS = ['⚙️', '🔩', '🔧', '🔋', '💡', '🛢️', '🔨', '🧲', '🤖', '🧯', '⛑️', '📡'];
+    const ITEM_OIL = '🛢️';
+    const ITEM_SCREW = '🔩';
+    const ITEM_BATTERY = '🔋';
+
+    // --- Geração de Layouts ---
+    const layoutHourglass = () => {
+        let arr = Array(49).fill(0);
+        [0, 1, 5, 6, 7, 13, 35, 41, 42, 47, 48].forEach(i => arr[i] = 1);
+        return arr;
+    };
+
+    const layoutIslands = () => {
+        let arr = Array(64).fill(0);
+        [18, 21, 42, 45].forEach(i => arr[i] = 1); 
+        return arr;
+    };
+
+    const layoutWall = () => {
+        let arr = Array(49).fill(0);
+        [21, 23, 25, 27].forEach(i => arr[i] = 1);
+        return arr;
+    };
+
+    const layoutMaze = () => {
+        let arr = Array(64).fill(0);
+        [2, 10, 18, 26, 34, 42, 50, 58, 5, 13, 21, 29, 37, 45, 53, 61].forEach(i => arr[i] = 1);
+        return arr;
+    };
+
+    const layoutCore = () => {
+        let arr = Array(81).fill(0);
+        [30, 31, 32, 39, 41, 48, 49, 50].forEach(i => arr[i] = 1);
+        return arr;
+    };
+
+    // --- Configurações dos Níveis (20 Fases) ---
+    const LEVELS = [
+      { id: 1, name: "Nível 1: A Oficina", difficulty: "Fácil", width: 6, height: 6, targetScore: 1000, moves: 15, types: 4, description: "Junte 4 para TNT, T/L para Plasma!" },
+      { id: 2, name: "Nível 2: Combustível", difficulty: "Fácil", width: 7, height: 7, targetScore: 3000, moves: 20, types: 4, description: "Espaço maior, combos mais fáceis." },
+      { id: 3, name: "Nível 3: Alta Voltagem", difficulty: "Médio", width: 8, height: 8, targetScore: 6000, moves: 25, types: 5, description: "Introduzindo mais cores." },
+      { id: 4, name: "Nível 4: Produção em Massa", difficulty: "Médio", width: 8, height: 8, targetScore: 10000, moves: 25, types: 5, description: "Foque nos Plasmas (T ou L)." },
+      { id: 5, name: "Nível 5: Turno Extra", difficulty: "Difícil", width: 6, height: 6, targetScore: 12000, moves: 20, types: 5, description: "Pequeno e lotado." },
+      { id: 6, name: "Nível 6: A Ampulheta", difficulty: "Técnico", width: 7, height: 7, targetScore: 8000, moves: 25, types: 4, layout: layoutHourglass(), description: "O formato dificulta os cantos." },
+      { id: 7, name: "Nível 7: O Galpão", difficulty: "Médio", width: 9, height: 9, targetScore: 15000, moves: 30, types: 5, description: "Tabuleiro gigante!" },
+      { id: 8, name: "Nível 8: Arquipélago", difficulty: "Técnico", width: 8, height: 8, targetScore: 12000, moves: 25, types: 5, layout: layoutIslands(), description: "Blocos fixos atrapalham os combos." },
+      { id: 9, name: "Nível 9: Compactador", difficulty: "Difícil", width: 5, height: 5, targetScore: 8000, moves: 20, types: 4, description: "Muito apertado para manobrar." },
+      { id: 10, name: "Nível 10: Caos Controlado", difficulty: "Difícil", width: 7, height: 7, targetScore: 20000, moves: 35, types: 6, description: "6 Cores! Muito difícil fazer combos." },
+      { id: 11, name: "Nível 11: A Barreira", difficulty: "Estratégico", width: 7, height: 7, targetScore: 18000, moves: 30, types: 5, layout: layoutWall(), description: "Derrube peças pelos buracos do muro." },
+      { id: 12, name: "Nível 12: Corredores", difficulty: "Médio", width: 8, height: 8, targetScore: 25000, moves: 28, types: 5, description: "Muitos movimentos, pontuação alta." },
+      { id: 13, name: "Nível 13: Sexta-Feira 13", difficulty: "Azarado", width: 6, height: 6, targetScore: 15000, moves: 13, types: 5, description: "Apenas 13 movimentos. Boa sorte." },
+      { id: 14, name: "Nível 14: Depósito Cheio", difficulty: "Difícil", width: 9, height: 9, targetScore: 40000, moves: 35, types: 6, description: "Grande e colorido." },
+      { id: 15, name: "Nível 15: O MONÓLITO", difficulty: "CHEFE", width: 9, height: 9, targetScore: 60000, moves: 45, types: 5, description: "Pontuação insana necessária." },
+      { id: 16, name: "Nível 16: Reator de Plasma", difficulty: "Experimental", width: 8, height: 8, targetScore: 80000, moves: 30, types: 4, description: "Apenas 4 cores: Chuva de combos!" },
+      { id: 17, name: "Nível 17: O Labirinto", difficulty: "Técnico", width: 8, height: 8, targetScore: 35000, moves: 40, types: 5, layout: layoutMaze(), description: "Colunas isoladas. Planeje bem." },
+      { id: 18, name: "Nível 18: Nano-Tech", difficulty: "Precisão", width: 6, height: 6, targetScore: 30000, moves: 25, types: 5, description: "Pequeno, mas exige muito." },
+      { id: 19, name: "Nível 19: Antes do Fim", difficulty: "Extremo", width: 8, height: 8, targetScore: 100000, moves: 35, types: 6, description: "O teste final antes do núcleo." },
+      { id: 20, name: "Nível 20: O NÚCLEO", difficulty: "FINAL", width: 9, height: 9, targetScore: 150000, moves: 50, types: 6, layout: layoutCore(), description: "O desafio final da Machine Crush." }
+    ];
+
+    const Particle = ({ x, y, color, type }) => {
+      const style = {
+        left: `${x}%`, top: `${y}%`, backgroundColor: color,
+        '--tx': `${(Math.random() - 0.5) * (type === 'MEGA' ? 250 : 150)}px`,
+        '--ty': `${(Math.random() - 0.5) * (type === 'MEGA' ? 250 : 150)}px`,
+        '--rot': `${Math.random() * 720}deg`,
+        width: type === 'MEGA' ? '12px' : '8px', height: type === 'MEGA' ? '12px' : '8px',
+        opacity: type === 'MEGA' ? 0.8 : 1, // Torna as partículas MEGA mais transparentes para um visual de explosão mais suave
+      };
+      return <div className="particle absolute rounded-full pointer-events-none z-50 animate-explode mix-blend-screen shadow-[0_0_10px_currentColor]" style={style} />;
+    };
+
+    const App = () => {
+      const [currentLevel, setCurrentLevel] = useState(null);
+      const [board, setBoard] = useState([]);
+      const [score, setScore] = useState(0);
+      const [moves, setMoves] = useState(0);
+      const [selectedPiece, setSelectedPiece] = useState(null);
+      const [gameState, setGameState] = useState('MENU');
+      const [shake, setShake] = useState(false);
+      const [particles, setParticles] = useState([]);
+      const [comboMessage, setComboMessage] = useState('');
+      const lastSwapRef = useRef([]);
+
+      const spawnParticles = (index, width, type = 'normal', count = 5) => {
+        const x = (index % width) * (100 / width) + (50 / width);
+        const y = Math.floor(index / width) * (100 / (board.length / width)) + (50 / (board.length / width));
+        let colors = ['#ffffff', '#ffff00'];
+        if (type === 'TNT') colors = ['#ff4d4d', '#ff0000', '#ffaa00'];
+        if (type === 'SUPER') colors = ['#00ffff', '#ffffff', '#0099ff'];
+        if (type === 'PLASMA') colors = ['#b026ff', '#ff00ff', '#800080']; 
+        if (type === 'BLOCK') colors = ['#808080', '#696969', '#a9a9a9'];
+        if (type === 'FIRE') colors = ['#ff4500', '#ff8c00', '#2a2a2a'];
+        
+        const newParticles = Array.from({ length: count }).map((_, i) => ({
+          id: `${Date.now()}-${Math.random()}-${i}`, 
+          x, y, 
+          color: colors[Math.floor(Math.random() * colors.length)], 
+          type
+        }));
+        setParticles(prev => [...prev, ...newParticles]);
+        setTimeout(() => setParticles(prev => prev.filter(p => !newParticles.includes(p))), 1000);
+      };
+
+      const showComboText = (text) => { setComboMessage(text); setTimeout(() => setComboMessage(''), 2000); };
+
+      const createBoard = useCallback((levelConfig) => {
+        const width = levelConfig.width;
+        const height = levelConfig.height;
+        const numTypes = levelConfig.types;
+        const layout = levelConfig.layout || [];
+        
+        const newBoard = [];
+        for (let i = 0; i < width * height; i++) {
+          if (layout.length > 0 && layout[i] === 1) {
+            newBoard.push(BLOCK);
+            continue;
+          }
+          let randomItem;
+          let isValid = false;
+          while (!isValid) {
+            randomItem = ITEMS[Math.floor(Math.random() * numTypes)];
+            isValid = true;
+            if (i % width >= 2) {
+                if (randomItem === newBoard[i-1] && randomItem === newBoard[i-2]) isValid = false;
+            }
+            if (i >= width * 2) {
+                if (randomItem === newBoard[i-width] && randomItem === newBoard[i-width*2]) isValid = false;
+            }
+          }
+          newBoard.push(randomItem);
+        }
+        setBoard(newBoard); setScore(0); setMoves(levelConfig.moves); setGameState('PLAYING');
+        lastSwapRef.current = []; setParticles([]); setComboMessage('');
+      }, []);
+
+      const startLevel = useCallback((levelId) => {
+        const level = LEVELS.find(l => l.id === levelId);
+        if (level) {
+            setCurrentLevel(level);
+            createBoard(level);
+        }
+      }, [createBoard]);
+
+      const getExplosionIndices = (boardState, startIndex, width, type) => {
+        let indicesToClear = new Set();
+        let queue = [{ index: startIndex, type }];
+        let processed = new Set();
+
+        while (queue.length > 0) {
+          const { index, type } = queue.shift();
+          if (processed.has(index)) continue;
+          processed.add(index);
+          indicesToClear.add(index);
+
+          const cx = index % width;
+          const cy = Math.floor(index / width);
+
+          if (type === 'TNT' || type === 'MEGA_TNT' || type === 'FIRE_EXPLOSION') {
+            const range = type === 'FIRE_EXPLOSION' ? 3 : type === 'MEGA_TNT' ? 2 : 1;
+            for (let dy = -range; dy <= range; dy++) {
+              for (let dx = -range; dx <= range; dx++) {
+                const nx = cx + dx;
+                const ny = cy + dy;
+                if (nx >= 0 && nx < width && ny >= 0 && ny < boardState.length / width) {
+                  const nIdx = ny * width + nx;
+                  indicesToClear.add(nIdx);
+                  // Propaga a explosão para power-ups vizinhos
+                  if ((boardState[nIdx] === TNT || boardState[nIdx] === PLASMA) && !processed.has(nIdx)) {
+                      queue.push({ index: nIdx, type: boardState[nIdx] === PLASMA ? 'PLASMA' : 'TNT' });
+                  }
+                }
+              }
+            }
+          } 
+          else if (type === 'PLASMA' || type === 'CROSS_BLAST' || type === 'SUPER') {
+            // Explosão Cruzada
+            for(let i=0; i<width; i++) {
+                const tIdx = cy * width + i;
+                indicesToClear.add(tIdx);
+                // Propaga a explosão em linha
+                if ((boardState[tIdx] === TNT || boardState[tIdx] === PLASMA) && !processed.has(tIdx) && tIdx !== index) {
+                    queue.push({ index: tIdx, type: boardState[tIdx] === PLASMA ? 'PLASMA' : 'TNT' });
+                }
+            }
+            for(let i=0; i<boardState.length/width; i++) {
+                const tIdx = i * width + cx;
+                indicesToClear.add(tIdx);
+                 // Propaga a explosão em coluna
+                if ((boardState[tIdx] === TNT || boardState[tIdx] === PLASMA) && !processed.has(tIdx) && tIdx !== index) {
+                    queue.push({ index: tIdx, type: boardState[tIdx] === PLASMA ? 'PLASMA' : 'TNT' });
+                }
+            }
+          }
+          else if (type === 'MEGA_PLASMA') {
+             // 3x3 + Cruz
+             for(let dy = -1; dy <= 1; dy++) {
+                 const row = cy + dy;
+                 if (row >= 0 && row < boardState.length/width) {
+                     for(let i=0; i<width; i++) indicesToClear.add(row * width + i);
+                 }
+             }
+             for(let dx = -1; dx <= 1; dx++) {
+                 const col = cx + dx;
+                 if (col >= 0 && col < width) {
+                     for(let i=0; i<boardState.length/width; i++) indicesToClear.add(i * width + col);
+                 }
+             }
+          }
+        }
+        return Array.from(indicesToClear);
+      };
+
+      const checkForMatches = useCallback(() => {
+        if (!currentLevel) return false;
+        const width = currentLevel.width;
+        const height = currentLevel.height;
+        let newBoard = [...board];
+        let matchFound = false;
+        let indicesToRemove = new Set();
+        let powerUpsToSpawn = []; 
+        let createdPowerupType = null; 
+        
+        let hMatches = [];
+        let vMatches = [];
+
+        // Matches Horizontais
+        for (let r = 0; r < height; r++) {
+            let currentRun = [];
+            let currentType = null;
+            for (let c = 0; c < width; c++) {
+                let idx = r * width + c;
+                let item = newBoard[idx];
+                if (ITEMS.includes(item) && item === currentType) {
+                    currentRun.push(idx);
+                } else {
+                    if (currentRun.length >= 3) hMatches.push({ indices: [...currentRun], type: currentType });
+                    currentType = ITEMS.includes(item) ? item : null;
+                    currentRun = [idx];
+                }
+            }
+            if (currentRun.length >= 3) hMatches.push({ indices: [...currentRun], type: currentType });
+        }
+
+        // Matches Verticais
+        for (let c = 0; c < width; c++) {
+            let currentRun = [];
+            let currentType = null;
+            for (let r = 0; r < height; r++) {
+                let idx = r * width + c;
+                let item = newBoard[idx];
+                if (ITEMS.includes(item) && item === currentType) {
+                    currentRun.push(idx);
+                } else {
+                    if (currentRun.length >= 3) vMatches.push({ indices: [...currentRun], type: currentType });
+                    currentType = ITEMS.includes(item) ? item : null;
+                    currentRun = [idx];
+                }
+            }
+            if (currentRun.length >= 3) vMatches.push({ indices: [...currentRun], type: currentType });
+        }
+
+        // Processar interseções (Matches T ou L) para criar PLASMA
+        let processedMatches = new Set(); 
+        
+        for (let h of hMatches) {
+            for (let v of vMatches) {
+                if (h.type === v.type) {
+                    const intersection = h.indices.find(idx => v.indices.includes(idx));
+                    if (intersection !== undefined) {
+                        matchFound = true;
+                        h.indices.forEach(i => indicesToRemove.add(i));
+                        v.indices.forEach(i => indicesToRemove.add(i));
+                        
+                        let spawnIdx = intersection;
+                        // Prioriza a célula que foi recentemente trocada para spawn
+                        const swapInvolved = lastSwapRef.current.find(s => h.indices.includes(s) || v.indices.includes(s));
+                        if (swapInvolved !== undefined && indicesToRemove.has(swapInvolved)) spawnIdx = swapInvolved;
+
+                        powerUpsToSpawn.push({ index: spawnIdx, type: PLASMA });
+                        createdPowerupType = 'PLASMA';
+                        
+                        processedMatches.add(h);
+                        processedMatches.add(v);
+                    }
+                }
+            }
+        }
+
+        const processSimpleMatch = (match) => {
+            if (processedMatches.has(match)) return;
+            matchFound = true;
+            match.indices.forEach(i => indicesToRemove.add(i));
+            
+            let type = null;
+            if (match.indices.length >= 5) {
+                 type = SUPER;
+                 createdPowerupType = 'SUPER';
+            }
+            else if (match.indices.length === 4) {
+                 type = TNT; 
+                 createdPowerupType = 'TNT';
+            }
+            
+            if (type) {
+                let spawnIndex = match.indices.find(idx => lastSwapRef.current.includes(idx));
+                if (spawnIndex === undefined) spawnIndex = match.indices[Math.floor(match.indices.length / 2)];
+                powerUpsToSpawn.push({ index: spawnIndex, type });
+            }
+        };
+
+        // Processa matches simples (4 ou 5) que não fizeram T ou L
+        hMatches.forEach(processSimpleMatch);
+        vMatches.forEach(processSimpleMatch);
+
+        if (matchFound) {
+          indicesToRemove.forEach(idx => { 
+              if(newBoard[idx] !== BLOCK) {
+                spawnParticles(idx, width, 'normal', 3); 
+                newBoard[idx] = ''; 
+              }
+          });
+          // Adiciona novos power-ups
+          powerUpsToSpawn.forEach(p => { 
+              newBoard[p.index] = p.type; 
+              spawnParticles(p.index, width, p.type, 8); 
+          });
+
+          if (createdPowerupType === 'TNT') showComboText('BOMBA!');
+          else if (createdPowerupType === 'PLASMA') showComboText('PLASMA!');
+          else if (createdPowerupType === 'SUPER') showComboText('SUPER RAIO!');
+
+          setScore(prev => prev + indicesToRemove.size * 50 + powerUpsToSpawn.length * 200);
+          setBoard(newBoard);
+          return true;
+        }
+        return false;
+      }, [board, currentLevel]);
+
+      const moveIntoSquareBelow = useCallback(() => {
+        if (!currentLevel) return false;
+        const width = currentLevel.width;
+        const height = currentLevel.height;
+        let isMoving = false;
+        let newBoard = [...board];
+
+        // Move as peças para baixo
+        for (let i = 0; i < width * (height - 1); i++) {
+            if (newBoard[i] === BLOCK) continue; // Pula blocos fixos
+            if (newBoard[i + width] === '') {
+                newBoard[i + width] = newBoard[i];
+                newBoard[i] = '';
+                isMoving = true;
+            }
+        }
+        // Repõe peças no topo
+        for (let i = 0; i < width; i++) {
+          if (newBoard[i] === '') {
+            newBoard[i] = ITEMS[Math.floor(Math.random() * currentLevel.types)];
+            isMoving = true;
+          }
+        }
+        if (isMoving) { setBoard(newBoard); return true; }
+        return false;
+      }, [board, currentLevel]);
+
+      // Loop principal do jogo e gravidade
+      useEffect(() => {
+        if (gameState !== 'PLAYING') return;
+        const timer = setInterval(() => {
+          const matchesFound = checkForMatches();
+          if (matchesFound) return; // Se encontrar match, espera a próxima iteração para a gravidade
+          const piecesMoved = moveIntoSquareBelow();
+          if (!matchesFound && !piecesMoved) {
+            // Se não houve match nem movimento, verifica a condição de fim de jogo
+            if (score >= currentLevel?.targetScore) setGameState('WIN');
+            else if (moves <= 0) setGameState('LOSE');
+          }
+        }, 150);
+        return () => clearInterval(timer);
+      }, [checkForMatches, moveIntoSquareBelow, gameState, score, moves, currentLevel]);
+
+      const triggerShake = (intensity = 'normal') => { setShake(intensity); setTimeout(() => setShake(false), 500); };
+
+      const handleClick = (index) => {
+        if (gameState !== 'PLAYING') return;
+        if (moves <= 0) return; 
+        if (board[index] === BLOCK) return;
+
+        if (selectedPiece === null) {
+          setSelectedPiece(index);
+        } else {
+          const width = currentLevel.width;
+          if (board[index] === BLOCK) { setSelectedPiece(null); return; }
+
+          const isAdjacent = [selectedPiece-1, selectedPiece+1, selectedPiece-width, selectedPiece+width].includes(index);
+          // Verifica se a troca horizontal não atravessa a borda
+          const isRowValid = (selectedPiece % width === 0 && index === selectedPiece - 1) ? false : 
+                             (selectedPiece % width === width - 1 && index === selectedPiece + 1) ? false : true;
+
+          if (isAdjacent && isRowValid) {
+            const item1 = board[selectedPiece];
+            const item2 = board[index];
+            let newBoard = [...board];
+            let actionTaken = false;
+            let massiveExplosion = false;
+
+            // --- MISTURAS DE POWER-UPS (AÇÕES ESPECIAIS) ---
+
+            // 1. PLASMA + PLASMA = Limpa o Tabuleiro (Singularidade)
+            if (item1 === PLASMA && item2 === PLASMA) {
+                newBoard = newBoard.map((item, idx) => { spawnParticles(idx, width, 'MEGA', 2); return ''; });
+                setScore(s => s + 8000); showComboText('SINGULARIDADE!'); triggerShake('heavy'); actionTaken = true; massiveExplosion = true;
+            }
+            // 2. PLASMA + SUPER = Cria Plasma de um tipo e o detona (Tempestade)
+            else if ((item1 === PLASMA && item2 === SUPER) || (item1 === SUPER && item2 === PLASMA)) {
+                const availableTypes = ITEMS.filter(type => newBoard.includes(type));
+                const targetType = availableTypes[Math.floor(Math.random() * availableTypes.length)] || ITEMS[0];
+                newBoard = newBoard.map((item, idx) => item === targetType ? PLASMA : item);
+                newBoard[selectedPiece] = ''; newBoard[index] = ''; 
+                const allPlasmaIndices = newBoard.map((item, idx) => item === PLASMA ? idx : -1).filter(i => i !== -1);
+                allPlasmaIndices.forEach(idx => {
+                    const exploded = getExplosionIndices(newBoard, idx, width, 'PLASMA');
+                    exploded.forEach(eIdx => { 
+                        if (newBoard[eIdx] === BLOCK) { spawnParticles(eIdx, width, 'BLOCK', 5); setScore(s => s + 500); }
+                        else { spawnParticles(eIdx, width, 'PLASMA', 2); }
+                        newBoard[eIdx] = ''; 
+                    });
+                });
+                setScore(s => s + 5000); showComboText('TEMPESTADE!'); triggerShake('heavy'); actionTaken = true;
+            }
+            // 3. PLASMA + TNT = Mega Cruz (3x3 + Linha/Coluna)
+            else if ((item1 === PLASMA && item2 === TNT) || (item1 === TNT && item2 === PLASMA)) {
+                const center = item1 === PLASMA ? selectedPiece : index;
+                const explodedIndices = getExplosionIndices(newBoard, center, width, 'MEGA_PLASMA');
+                explodedIndices.forEach(idx => { spawnParticles(idx, width, 'PLASMA', 4); newBoard[idx] = ''; });
+                newBoard[selectedPiece] = ''; newBoard[index] = '';
+                setScore(s => s + 2500); showComboText('MEGA CRUZ!'); triggerShake('heavy'); actionTaken = true;
+            }
+            // 4. SUPER + SUPER = Limpa o Tabuleiro (Limpeza Total)
+            else if (item1 === SUPER && item2 === SUPER) {
+                newBoard = newBoard.map((item, idx) => { spawnParticles(idx, width, 'MEGA', 2); return ''; });
+                setScore(s => s + 5000); showComboText('LIMPEZA TOTAL!'); triggerShake('heavy'); actionTaken = true; massiveExplosion = true;
+            }
+            // 5. SUPER + TNT = Cria TNTs de um tipo e os detona (Bombas!)
+            else if ((item1 === SUPER && item2 === TNT) || (item1 === TNT && item2 === SUPER)) {
+                 const availableTypes = ITEMS.filter(type => newBoard.includes(type));
+                const targetType = availableTypes[Math.floor(Math.random() * availableTypes.length)] || ITEMS[0];
+                newBoard = newBoard.map((item, idx) => item === targetType ? TNT : item);
+                newBoard[selectedPiece] = ''; newBoard[index] = '';
+                const allTntIndices = newBoard.map((item, idx) => item === TNT ? idx : -1).filter(i => i !== -1);
+                allTntIndices.forEach(idx => {
+                    const exploded = getExplosionIndices(newBoard, idx, width, 'TNT');
+                    exploded.forEach(eIdx => { 
+                        if (newBoard[eIdx] === BLOCK) { spawnParticles(eIdx, width, 'BLOCK', 5); setScore(s => s + 500); }
+                        else { spawnParticles(eIdx, width, 'TNT', 2); }
+                        newBoard[eIdx] = ''; 
+                    });
+                });
+                setScore(s => s + 3000); showComboText('BOMBAS!'); triggerShake('heavy'); actionTaken = true;
+            }
+            // 6. TNT + TNT = Mega Bomba (5x5)
+            else if (item1 === TNT && item2 === TNT) {
+                const explodedIndices = getExplosionIndices(newBoard, index, width, 'MEGA_TNT');
+                explodedIndices.forEach(idx => { 
+                    if (newBoard[idx] === BLOCK) { spawnParticles(idx, width, 'BLOCK', 5); setScore(s => s + 500); }
+                    else { spawnParticles(idx, width, 'TNT', 5); }
+                    newBoard[idx] = ''; 
+                });
+                newBoard[selectedPiece] = ''; newBoard[index] = '';
+                setScore(s => s + 1000); showComboText('MEGA BOOM!'); triggerShake('heavy'); actionTaken = true;
+            }
+            // 7. Power-up + Item Especial (Ex: TNT + Óleo)
+            else if (item1 === TNT || item2 === TNT || item1 === SUPER || item2 === SUPER || item1 === PLASMA || item2 === PLASMA || ((item1 === ITEM_OIL || item2 === ITEM_OIL) && (item1 === TNT || item2 === TNT))) {
+                 let type = 'TNT';
+                 let center = index;
+                 if ((item1 === TNT && item2 === ITEM_OIL) || (item1 === ITEM_OIL && item2 === TNT)) { type = 'FIRE_EXPLOSION'; center = item1 === TNT ? selectedPiece : index; showComboText('NAPALM!'); }
+                 else if ((item1 === TNT && item2 === ITEM_SCREW) || (item1 === ITEM_SCREW && item2 === TNT)) { type = 'CROSS_BLAST'; center = item1 === TNT ? selectedPiece : index; showComboText('ESTILHAÇOS!'); }
+                 else if (item1 === SUPER || item2 === SUPER) { 
+                     type = 'SUPER'; center = item1 === SUPER ? selectedPiece : index; 
+                     if (item1 === ITEM_BATTERY || item2 === ITEM_BATTERY) showComboText('SOBRECARGA!');
+                 }
+                 else if (item1 === PLASMA || item2 === PLASMA) {
+                     type = 'PLASMA'; center = item1 === PLASMA ? selectedPiece : index;
+                 }
+
+                 const explodedIndices = getExplosionIndices(newBoard, center, width, type);
+                 explodedIndices.forEach(idx => {
+                    if (newBoard[idx] === BLOCK) { spawnParticles(idx, width, 'BLOCK', 5); setScore(s => s + 500); }
+                    else { spawnParticles(idx, width, type, 2); }
+                    newBoard[idx] = '';
+                 });
+                 newBoard[selectedPiece] = ''; newBoard[index] = '';
+                 actionTaken = true; massiveExplosion = true;
+            }
+
+            // Ação padrão: Tenta a troca
+            if (!actionTaken) {
+              newBoard[index] = item1; newBoard[selectedPiece] = item2; lastSwapRef.current = [selectedPiece, index];
+              // Checa se a troca resultou em um match antes de consumir o movimento
+              if (!checkForMatches()) {
+                 // Desfaz a troca se não houve match imediato
+                 newBoard[index] = item2; newBoard[selectedPiece] = item1;
+                 lastSwapRef.current = [];
+              } else {
+                 actionTaken = true; // Match encontrado, ação confirmada
+              }
+            } else { lastSwapRef.current = []; } // Ação especial (power-up) consumiu o movimento
+
+            if (actionTaken) {
+                if (massiveExplosion) triggerShake('normal');
+                setBoard(newBoard); 
+                setMoves(prev => Math.max(0, prev - 1)); 
+            }
+            
+            setSelectedPiece(null);
+          } else {
+            // Seleciona ou deseleciona
+            setSelectedPiece(index === selectedPiece ? null : index);
+          }
+        }
+      };
+
+      const getShakeClass = () => shake === 'heavy' ? 'animate-shake-heavy' : shake === 'normal' ? 'animate-shake' : '';
+
+      if (gameState === 'MENU') {
+        return (
+          <div className="min-h-screen bg-slate-950 text-white font-sans flex flex-col items-center justify-center p-4 relative overflow-hidden">
+            <div className="absolute top-0 left-0 w-full h-full bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-blue-900/20 via-slate-950 to-slate-950"></div>
+            <div className="max-w-md w-full bg-slate-900/80 backdrop-blur-md rounded-2xl shadow-2xl overflow-hidden border border-slate-700 z-10 flex flex-col h-[85vh]">
+              <div className="p-6 text-center border-b border-slate-700 relative overflow-hidden flex-shrink-0">
+                 <div className="absolute inset-0 bg-gradient-to-r from-purple-500/10 to-blue-500/10 animate-pulse"></div>
+                <h1 className="text-4xl font-black mb-2 text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-500 drop-shadow-sm italic">MACHINE<br/>CRUSH</h1>
+                <p className="text-blue-300 text-xs font-semibold tracking-widest uppercase mt-2">20 NÍVEIS - NOVOS DESAFIOS</p>
+              </div>
+              <div className="p-4 bg-slate-950/50 text-[10px] text-slate-400 grid grid-cols-4 gap-2 text-center border-b border-slate-700 flex-shrink-0">
+                 <div className="flex flex-col items-center p-1 bg-slate-900 rounded border border-red-500/50 text-red-200"><span className="text-lg">🧨</span><span>4 Linha</span></div>
+                 <div className="flex flex-col items-center p-1 bg-slate-900 rounded border border-purple-500/50 text-purple-200"><span className="text-lg">💠</span><span>T ou L</span></div>
+                 <div className="flex flex-col items-center p-1 bg-slate-900 rounded border border-blue-500/50 text-blue-200"><span className="text-lg">⚡</span><span>5 Linha</span></div>
+                 <div className="flex flex-col items-center p-1 bg-slate-900 rounded"><span className="text-lg">🧱</span><span>Parede</span></div>
+              </div>
+              <div className="p-4 space-y-3 overflow-y-auto custom-scrollbar flex-grow">
+                {LEVELS.map((level) => (
+                  <button key={level.id} onClick={() => startLevel(level.id)} className={`w-full transition-all p-3 rounded-xl flex items-center justify-between group text-left border shadow-md ${level.id === 20 ? 'bg-red-900/40 border-red-500 hover:bg-red-800' : level.id === 15 ? 'bg-purple-900/40 border-purple-500 hover:bg-purple-800' : level.id > 10 ? 'bg-slate-800/80 border-slate-600 hover:border-blue-400' : 'bg-slate-800 border-slate-700 hover:border-orange-400'}`}>
+                    <div>
+                      <span className={`font-bold text-sm block ${level.id === 20 ? 'text-red-100' : level.id === 15 ? 'text-purple-100' : 'text-slate-100'}`}>{level.name}</span>
+                      <span className="text-[10px] text-slate-400 group-hover:text-white block">{level.description}</span>
+                    </div>
+                    <div className={`p-2 rounded-full transition-colors ${level.id === 20 ? 'bg-red-900' : level.id === 15 ? 'bg-purple-900' : 'bg-slate-900 group-hover:bg-white/20'}`}>
+                        {level.id === 20 ? <Flame size={16} className="text-white animate-pulse" /> : level.id === 15 ? <Radio size={16} className="text-purple-300 animate-pulse" /> : level.id > 10 ? <Lock size={16} className="text-blue-300" /> : <Play size={16} className="text-orange-400" />}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      // Tela de Vitória / Derrota
+      if (gameState === 'WIN' || gameState === 'LOSE') {
+          return (
+              <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-white p-4">
+                  <div className="bg-slate-900 p-8 rounded-2xl border border-slate-700 shadow-2xl text-center max-w-sm w-full">
+                      <h2 className={`text-4xl font-black mb-4 ${gameState === 'WIN' ? 'text-green-400' : 'text-red-500'}`}>
+                          {gameState === 'WIN' ? 'VITÓRIA!' : 'FALHA!'}
+                      </h2>
+                      <p className="mb-6 text-slate-300">
+                          {gameState === 'WIN' ? `Você dominou o ${currentLevel.name}!` : 'O sistema superaqueceu.'}
+                      </p>
+                      <div className="text-2xl font-bold mb-6 text-orange-400">{score} Pontos</div>
+                      <button onClick={() => setGameState('MENU')} className="bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 px-6 rounded-lg w-full transition-colors flex items-center justify-center gap-2">
+                         Menu Principal
+                      </button>
+                  </div>
+              </div>
+          )
+      }
+
+      return (
+        <div className="min-h-screen bg-slate-950 text-white font-sans flex flex-col items-center justify-center p-2 overflow-hidden select-none">
+          <style>{`
+            @keyframes shake { 0% { transform: translate(1px, 1px); } 50% { transform: translate(-1px, 2px); } 100% { transform: translate(0, 0); } }
+            @keyframes shakeHeavy { 0% { transform: translate(0, 0); } 25% { transform: translate(-5px, 5px) rotate(-2deg); } 75% { transform: translate(5px, -5px) rotate(2deg); } 100% { transform: translate(0, 0); } }
+            .animate-shake { animation: shake 0.4s; }
+            .animate-shake-heavy { animation: shakeHeavy 0.6s; }
+            @keyframes explode { 0% { transform: translate(0,0) scale(1); opacity: 1; } 100% { transform: translate(var(--tx), var(--ty)) rotate(var(--rot)) scale(0); opacity: 0; } }
+            .animate-explode { animation: explode 0.8s ease-out forwards; }
+            .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+            .custom-scrollbar::-webkit-scrollbar-track { background: rgba(0,0,0,0.2); }
+            .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 4px; }
+            @keyframes popup { 0% { transform: scale(0); opacity: 0; } 50% { transform: scale(1.2); opacity: 1; } 100% { transform: scale(1); opacity: 1; } }
+            .combo-text { animation: popup 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+          `}</style>
+
+          <div className="text-center mb-2">
+             <h2 className="text-xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-500 uppercase tracking-widest">{currentLevel.name}</h2>
+          </div>
+
+          <div className="w-full max-w-lg mb-2 flex justify-between items-center bg-slate-900 p-3 rounded-xl border border-slate-700 shadow-lg relative z-20">
+            <div className="flex flex-col items-center w-1/3 border-r border-slate-700"><span className="text-[10px] text-slate-400 uppercase font-bold">Movimentos</span><span className={`text-2xl font-black ${moves < 5 ? 'text-red-500 animate-pulse' : 'text-white'}`}>{moves}</span></div>
+            <div className="flex flex-col items-center w-1/3 border-r border-slate-700"><span className="text-[10px] text-slate-400 uppercase font-bold">Meta</span><span className="text-lg text-yellow-400 font-bold">{currentLevel.targetScore}</span></div>
+            <div className="flex flex-col items-center w-1/3"><span className="text-[10px] text-slate-400 uppercase font-bold">Pontos</span><span className="text-2xl font-black text-orange-400">{score}</span></div>
+          </div>
+
+          <div className="w-full max-w-lg h-4 bg-slate-900 rounded-full mb-4 overflow-hidden border border-slate-700 relative shadow-inner">
+            <div className="h-full bg-gradient-to-r from-purple-600 via-pink-500 to-orange-400 transition-all duration-300 ease-out" style={{ width: `${Math.min((score / currentLevel.targetScore) * 100, 100)}%` }} />
+          </div>
+
+          {comboMessage && (
+              <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-50 pointer-events-none w-full text-center">
+                  <h1 className="text-4xl md:text-5xl font-black text-transparent bg-clip-text bg-gradient-to-b from-white to-yellow-400 drop-shadow-[0_4px_8px_rgba(0,0,0,0.8)] combo-text stroke-black" style={{ WebkitTextStroke: '1px black' }}>{comboMessage}</h1>
+              </div>
+          )}
+
+          <div className={`relative transition-transform duration-75 ${getShakeClass()}`}>
+            <div className="bg-slate-900 p-2 rounded-xl shadow-2xl border-4 border-slate-800 relative overflow-hidden" style={{ display: 'grid', gridTemplateColumns: `repeat(${currentLevel.width}, 1fr)`, gap: '0.2rem', width: '95vw', maxWidth: '450px', aspectRatio: `${currentLevel.width}/${currentLevel.height}` }}>
+                {particles.map(p => <Particle key={p.id} {...p} />)}
+                {board.map((item, index) => (
+                <div key={index} onClick={() => handleClick(index)} className={`rounded-lg flex items-center justify-center text-3xl md:text-4xl cursor-pointer transition-all duration-150 transform active:scale-95 ${selectedPiece === index ? 'bg-orange-600 ring-2 ring-yellow-400 z-10' : item === TNT ? 'bg-red-600' : item === PLASMA ? 'bg-purple-600' : item === SUPER ? 'bg-blue-500 animate-pulse' : item === BLOCK ? 'bg-stone-700' : 'bg-slate-800 hover:bg-slate-700'} ${item === '' ? 'invisible' : ''} shadow-inner border border-white/5`}>
+                    {item}
+                </div>
+                ))}
+            </div>
+          </div>
+          
+          <div className="mt-4 flex gap-4">
+              <button onClick={() => setGameState('MENU')} className="text-slate-500 text-xs hover:text-white flex items-center gap-1 p-2 rounded-lg hover:bg-slate-800 transition-colors">
+                  <Icon path={<path d="M19 12H5M12 19l-7-7 7-7"/>} size={14}/> VOLTAR AO MENU
+              </button>
+          </div>
+        </div>
+      );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+</script>
+
+</body>
+</html>
